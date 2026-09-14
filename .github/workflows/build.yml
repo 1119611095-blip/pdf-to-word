@@ -20,16 +20,16 @@ jobs:
       - name: Check PDF text and image conversion
         run: python app.py --smoke-test source-test
       - name: Build application
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name PDF-to-Word --collect-all pdf2docx app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name PDF-to-Word-OCR --collect-all pdf2docx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --collect-all shapely app.py
       - name: Test packaged executable
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ".\dist\PDF-to-Word.exe" -ArgumentList "--smoke-test", "packaged-test" -Wait -PassThru
+          $process = Start-Process -FilePath ".\dist\PDF-to-Word-OCR.exe" -ArgumentList "--smoke-test", "packaged-test" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "EXE test failed" }
           if (!(Test-Path "packaged-test/success.txt")) { throw "EXE did not complete conversion" }
       - uses: actions/upload-artifact@v4
         with:
-          name: PDF-to-Word-Windows-x64
-          path: dist/PDF-to-Word.exe
+          name: PDF-to-Word-OCR-Windows-x64
+          path: dist/PDF-to-Word-OCR.exe
           if-no-files-found: error
           retention-days: 30
