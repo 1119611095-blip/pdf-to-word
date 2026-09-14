@@ -45,4 +45,25 @@ class Tests(unittest.TestCase):
             self.assertEqual(len(list(out.glob("*-comic.png"))),2)
             self.assertEqual(json.loads((out/"storyboard.json").read_text(encoding="utf-8")),data)
 
+
+    def test_bcj2_extract_repairs_partial_install(self):
+        import os
+        archive = Path(os.environ["BCJ2_FIXTURE"])
+        payload = Path(os.environ["BCJ2_PAYLOAD"])
+        with tempfile.TemporaryDirectory(prefix="BCJ2 中文 ") as tmp:
+            out=Path(tmp)
+            (out/"payload.exe").write_bytes(b"partial previous extraction")
+            (out/"user.txt").write_text("keep")
+            app.extract_7z(archive,out,lambda _:None)
+            self.assertEqual(app.digest(out/"payload.exe"),app.digest(payload))
+            self.assertEqual((out/"user.txt").read_text(),"keep")
+
+    def test_corrupt_archive_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive=Path(tmp)/"bad.7z"
+            archive.write_bytes(b"not an archive")
+            with self.assertRaisesRegex(RuntimeError,"7-Zip"):
+                app.extract_7z(archive,Path(tmp)/"out",lambda _:None)
+
 if __name__=="__main__":unittest.main()
+
