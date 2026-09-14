@@ -73,8 +73,27 @@ def download(url, dest, sha, size, log):
             log("连接中断，正在重试…")
             time.sleep(3)
 
+
+def sevenzip():
+    exe = Path(__file__).resolve().parent/"tools/7zip/7za.exe"
+    if not exe.is_file():
+        raise RuntimeError("缺少内置 7-Zip 解压工具，请重新下载完整的修复版 EXE。")
+    return exe
+
+def extract_7z(package, destination, log):
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    log("使用内置 7-Zip 解压，已解压一部分的文件会自动补齐…")
+    result = subprocess.run(
+        [str(sevenzip()), "x", str(Path(package).resolve()),
+         "-o"+str(destination.resolve()), "-y", "-aoa", "-bsp0", "-sccUTF-8"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        encoding="utf-8", errors="replace", creationflags=0x08000000)
+    if result.returncode != 0:
+        raise RuntimeError("7-Zip 解压失败（代码 %s）：\n%s" %
+                           (result.returncode, result.stdout[-2500:]))
+
 def prepare(log):
-    import py7zr
     if not Path("D:/").exists():
         raise RuntimeError("未找到 D 盘。")
     ROOT.mkdir(parents=True, exist_ok=True)
@@ -92,8 +111,7 @@ def prepare(log):
         download(a["url"], package, expected, a["size"], log)
         log("正在解压 "+key+"，可能需要几分钟…")
         if ext == "7z":
-            with py7zr.SevenZipFile(package, "r") as z:
-                z.extractall(ROOT)
+            extract_7z(package, ROOT, log)
         else:
             with zipfile.ZipFile(package) as z:
                 z.extractall(ROOT/"ollama")
@@ -296,7 +314,7 @@ def generate(data, style, log):
 def gui():
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
-    root=tk.Tk();root.title("小说漫画工坊 · 本地版");root.geometry("940x780")
+    root=tk.Tk();root.title("小说漫画工坊 · 本地版 1.0.1（解压修复）");root.geometry("940x780")
     events=queue.Queue();busy=False
     frame=ttk.Frame(root,padding=16);frame.pack(fill="both",expand=True)
     ttk.Label(frame,text="小说漫画工坊",font=("Microsoft YaHei UI",20)).pack(anchor="w")
@@ -377,12 +395,14 @@ def gui():
 
 if __name__=="__main__":
     if len(sys.argv)==3 and sys.argv[1]=="--verify-package":
-        import py7zr
+        sevenzip()
         destination=Path(sys.argv[2])
         destination.mkdir(parents=True,exist_ok=True)
         comic_page(Image.new("RGB",(768,1024),"white"),"中文漫画测试").save(destination/"test.png")
         validate_story({"panels":[{"prompt":"test"}]})
         assert workflow("test",1)["9"]["inputs"]["steps"]==4
         (destination/"success.txt").write_text("Package verified",encoding="utf-8")
+    elif len(sys.argv)==4 and sys.argv[1]=="--verify-archive":
+        extract_7z(sys.argv[2], sys.argv[3], lambda _: None)
     else:
         gui()
