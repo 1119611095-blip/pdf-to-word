@@ -1,3 +1,7 @@
+1.0.1 修复版：改用内置官方 7-Zip，修复 BCJ2 不支持导致的安装失败。
+更新方法：关闭旧程序，只替换 NovelComic.exe，再点击“安装 / 检查环境”。
+保留 downloads、模型和已解压目录；校验通过的下载不会重新下载，未完成解压会重新解压补齐。
+
 小说漫画工坊 · 本地部署包
 
 1. 把 NovelComic.exe 放到 D:\NovelComic 文件夹（没有就新建）。
@@ -32,3 +36,6 @@ https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8
 https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b
 https://ollama.com/library/qwen3:8b
 软件和模型遵循各自许可证。
+
+内置 7-Zip 26.03（7za.exe），版权与许可证随包附带于 7zip 目录。
+https://github.com/ip7z/7zip
