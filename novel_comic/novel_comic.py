@@ -376,4 +376,13 @@ def gui():
     root.protocol("WM_DELETE_WINDOW",close);root.after(150,poll);root.mainloop()
 
 if __name__=="__main__":
-    gui()
+    if len(sys.argv)==3 and sys.argv[1]=="--verify-package":
+        import py7zr
+        destination=Path(sys.argv[2])
+        destination.mkdir(parents=True,exist_ok=True)
+        comic_page(Image.new("RGB",(768,1024),"white"),"中文漫画测试").save(destination/"test.png")
+        validate_story({"panels":[{"prompt":"test"}]})
+        assert workflow("test",1)["9"]["inputs"]["steps"]==4
+        (destination/"success.txt").write_text("Package verified",encoding="utf-8")
+    else:
+        gui()
