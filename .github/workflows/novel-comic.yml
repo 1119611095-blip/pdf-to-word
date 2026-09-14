@@ -16,24 +16,48 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install build dependencies
-        run: python -m pip install requests==2.32.5 pillow==11.3.0 py7zr==1.0.0 pyinstaller==6.16.0
+        run: python -m pip install requests==2.32.5 pillow==11.3.0 pyinstaller==6.16.0
+      - name: Bundle official 7-Zip and create BCJ2 regression fixture
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/ip7z/7zip/releases/download/26.03/7z2603-extra.7z -OutFile 7zip-extra.7z
+          if ((Get-FileHash 7zip-extra.7z -Algorithm SHA256).Hash.ToLower() -ne "191894e6acb3647ffb69ce630479ff318523b2e2b9890aa7f05c1127c2e59b8f") { throw "7-Zip hash mismatch" }
+          $zipTool = "C:\Program Files\7-Zip\7z.exe"
+          & $zipTool x 7zip-extra.7z "-onovel_comic/tools/7zip" -y
+          if ($LASTEXITCODE -ne 0) { throw "Cannot prepare 7-Zip" }
+          New-Item -ItemType Directory fixtures/input -Force | Out-Null
+          $pythonExe = python -c "import sys; print(sys.executable)"
+          Copy-Item $pythonExe fixtures/input/payload.exe
+          Push-Location fixtures/input
+          & $zipTool a ../bcj2.7z payload.exe "-m0=BCJ2" "-m1=LZMA2" "-m2=LZMA2" "-m3=LZMA2" "-mb0:1" "-mb0s1:2" "-mb0s2:3"
+          if ($LASTEXITCODE -ne 0) { throw "BCJ2 fixture creation failed" }
+          Pop-Location
+          $listing = & $zipTool l -slt fixtures/bcj2.7z
+          if (!($listing -match "BCJ2")) { throw "Fixture must use BCJ2" }
+          "BCJ2_FIXTURE=$((Resolve-Path fixtures/bcj2.7z).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "BCJ2_PAYLOAD=$((Resolve-Path fixtures/input/payload.exe).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Test installer and comic export
         working-directory: novel_comic
         run: python -m unittest -v test_app
       - name: Package desktop application
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NovelComic --collect-all py7zr novel_comic/novel_comic.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NovelComic --add-data "novel_comic/tools/7zip;tools/7zip" novel_comic/novel_comic.py
       - name: Check packaged runtime
         shell: pwsh
         run: |
           $process = Start-Process -FilePath ".\dist\NovelComic.exe" -ArgumentList "--verify-package", "package-test" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Package failed" }
           if (!(Test-Path "package-test/success.txt")) { throw "Package verification missing" }
+          $archiveProcess = Start-Process -FilePath ".\dist\NovelComic.exe" -ArgumentList "--verify-archive", "fixtures/bcj2.7z", "package-test/extracted" -Wait -PassThru
+          if ($archiveProcess.ExitCode -ne 0) { throw "Packaged BCJ2 extraction failed" }
+          if ((Get-FileHash package-test/extracted/payload.exe).Hash -ne (Get-FileHash fixtures/input/payload.exe).Hash) { throw "Packaged extraction content mismatch" }
           Copy-Item novel_comic/README.txt dist/README.txt
+          Copy-Item novel_comic/tools/7zip dist/7zip -Recurse
       - uses: actions/upload-artifact@v4
         with:
-          name: NovelComic-Windows-Setup
+          name: NovelComic-Windows-Setup-1.0.1
           path: |
             dist/NovelComic.exe
             dist/README.txt
+            dist/7zip/
           if-no-files-found: error
           retention-days: 30
