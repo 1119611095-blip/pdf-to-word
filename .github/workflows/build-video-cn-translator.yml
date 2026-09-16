@@ -1,0 +1,51 @@
+name: Build Video Chinese Translator EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'video-cn-translator/**'
+      - '.github/workflows/build-video-cn-translator.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r video-cn-translator/requirements.txt
+
+      - name: Build single-file EXE
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed `
+            --name "VideoChineseTranslator" `
+            --collect-all imageio_ffmpeg `
+            --collect-all faster_whisper `
+            --collect-all ctranslate2 `
+            --collect-all av `
+            --hidden-import huggingface_hub `
+            video-cn-translator/app.py
+
+      - name: Smoke-check artifact
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/VideoChineseTranslator.exe")) { throw "EXE not found" }
+          Get-Item "dist/VideoChineseTranslator.exe" | Format-List Name,Length,LastWriteTime
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoChineseTranslator-Windows-EXE
+          path: dist/VideoChineseTranslator.exe
+          if-no-files-found: error
