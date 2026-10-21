@@ -13,9 +13,25 @@ def address(resource):
     if not 1<=port<=65535:raise ValueError('TCP 端口必须为 1～65535')
     return host,port
 
-def resource_name(value):
+BACKENDS = ('R&S VISA / VXI-11', '系统默认 VISA / VXI-11', 'PyVISA / VXI-11', '直接 Socket')
+
+def connection_plan(value, backend):
     host,port=address(value)
-    return f'TCPIP::{host}::{port}::SOCKET'
+    if backend not in BACKENDS:raise ValueError('未知通信后端')
+    if backend=='直接 Socket':
+        return f'TCPIP::{host}::{port}::SOCKET', 'SelectVisa=SocketIo, OpenTimeout=10000, VisaTimeout=10000'
+    if value.strip().upper().endswith('::SOCKET'):
+        raise ValueError('当前选择 VXI-11，请输入 IP 或 ::inst0::INSTR 地址；Socket 地址请配合“直接 Socket”选项')
+    resource=value.strip() if '::' in value else f'TCPIP0::{host}::inst0::INSTR'
+    if '::' in resource and not resource.upper().endswith('::INSTR'):
+        resource=f'TCPIP0::{host}::inst0::INSTR'
+    options='OpenTimeout=10000, VisaTimeout=10000'
+    if backend==BACKENDS[0]:options='SelectVisa=rs, '+options
+    if backend==BACKENDS[2]:options='SelectVisa=py, '+options
+    return resource, options
+
+def resource_name(value):
+    return connection_plan(value, BACKENDS[0])[0]
 
 def diagnose(value):
     host,port=address(value)

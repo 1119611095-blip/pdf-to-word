@@ -8,7 +8,7 @@ from core import Settings,Curve,Demo,ESR
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('ESR3 · CE 传导发射工作台 | v0.2 连接修复版'); self.geometry('1160x790'); self.minsize(960,680)
+        super().__init__(); self.title('ESR3 · CE 传导发射工作台 | v0.3 VXI-11 版'); self.geometry('1160x790'); self.minsize(960,680)
         self.configure(bg='#edf2f7'); self.q=queue.Queue(); self.stop=threading.Event(); self.busy=False
         self.rows=[]; self.correction=None; self.limit=None; self.meta={}; self.logs=[]
         style=ttk.Style(self); style.theme_use('clam'); style.configure('TButton',padding=7); style.configure('TLabel',font=('Microsoft YaHei UI',10))
@@ -22,6 +22,12 @@ class App(tk.Tk):
             v=self.v[key]=tk.StringVar(value=value)
             w=ttk.Combobox(pane,textvariable=v,values=opts,state='readonly',width=13) if opts else ttk.Entry(pane,textvariable=v,width=38)
             w.grid(row=0,column=i*2+1,padx=5)
+        from connection import BACKENDS
+        row=ttk.Frame(self,padding=(20,5));row.pack(fill='x')
+        ttk.Label(row,text='通信后端').pack(side='left')
+        self.v['backend']=tk.StringVar(value=BACKENDS[0])
+        ttk.Combobox(row,textvariable=self.v['backend'],values=BACKENDS,state='readonly',width=28).pack(side='left',padx=8)
+        ttk.Label(row,text='VXI-11 与 Socket 独立选择；超时 10 秒').pack(side='left')
         grid=ttk.Frame(self,padding=(16,2));grid.pack(fill='x')
         for i,(key,label,value) in enumerate([('start','起始 MHz','0.15'),('end','终止 MHz','30'),('step','步长 kHz','4.5'),('dwell','驻留 ms','20')]):
             ttk.Label(grid,text=label).grid(row=0,column=i*2,padx=5)
@@ -30,7 +36,7 @@ class App(tk.Tk):
         actions=ttk.Frame(self,padding=(16,10));actions.pack(fill='x')
         for text,cmd in [('检测连接',self.connect),('网络诊断',self.diagnose),('保存日志',self.save_log),('加载修正 CSV',self.load_correction),('加载限值 CSV',self.load_limit),('清除曲线文件',self.clear_curves),('开始测量',self.start),('停止',self.cancel),('导出 CSV+记录',self.export)]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=3)
-        self.note=tk.StringVar(value='LAN 使用直接 TCP 5025，无需 VISA 驱动；L/N 请手动切换 LISN。')
+        self.note=tk.StringVar(value='默认使用 R&S VISA / VXI-11；仅选择“直接 Socket”时使用端口 5025。')
         ttk.Label(self,textvariable=self.note,wraplength=1120,padding=(20,4)).pack(fill='x')
         self.canvas=tk.Canvas(self,bg='#fff',highlightthickness=0,height=340);self.canvas.pack(fill='both',expand=True,padx=20,pady=8);self.canvas.bind('<Configure>',lambda e:self.draw())
         self.progress=ttk.Progressbar(self,maximum=100);self.progress.pack(fill='x',padx=20)
@@ -48,12 +54,12 @@ class App(tk.Tk):
         return True
     def connect(self):
         if not self.idle():return
-        demo=self.v['mode'].get()=='模拟演示';resource=self.v['resource'].get().strip();self.busy=True
+        demo=self.v['mode'].get()=='模拟演示';resource=self.v['resource'].get().strip();backend=self.v['backend'].get();self.busy=True
         self.status.set('正在检测连接…')
         def work():
             dev=None
             try:
-                dev=Demo() if demo else ESR(resource,lambda m:self.q.put(('log',m)))
+                dev=Demo() if demo else ESR(resource,lambda m:self.q.put(('log',m)),backend=backend)
                 self.q.put(('message',dev.idn))
             except Exception as e:self.q.put(('error',str(e)))
             finally:
@@ -64,13 +70,22 @@ class App(tk.Tk):
         threading.Thread(target=work,daemon=True).start()
     def diagnose(self):
         if not self.idle():return
-        resource=self.v['resource'].get().strip();self.busy=True
-        self.status.set('正在诊断 TCP 端口与 *IDN? 响应…')
+        resource=self.v['resource'].get().strip();backend=self.v['backend'].get();self.busy=True
+        self.status.set('正在按所选协议诊断连接…')
         def work():
-            from connection import diagnose
-            try:self.q.put(('message',diagnose(resource)))
+            dev=None
+            try:
+                if backend=='直接 Socket':
+                    from connection import diagnose
+                    report=diagnose(resource)
+                else:
+                    dev=ESR(resource,lambda m:self.q.put(('log',m)),backend=backend)
+                    report=backend+' 连接成功\n'+dev.idn
+                self.q.put(('message',report))
             except Exception as e:self.q.put(('error',str(e)))
-            finally:self.q.put(('idle',None))
+            finally:
+                if dev:dev.io.close()
+                self.q.put(('idle',None))
         threading.Thread(target=work,daemon=True).start()
     def save_log(self):
         p=filedialog.asksaveasfilename(defaultextension='.txt',initialfile='ESR3_connection_log.txt')
@@ -100,14 +115,15 @@ class App(tk.Tk):
         demo=self.v['mode'].get()=='模拟演示'
         if not demo and not messagebox.askokcancel('开始 ESR3 实测', '将预置 ESR3 当前设置（*RST），使用 RF INPUT1、AC 耦合、50Ω、自动衰减、前放关闭。\n仪器现有设置需先自行保存；本程序不自动恢复。\n确认 LISN 已手动切换到 '+s.phase+'，并核对连接和外部修正文件。\n本版未实现自动过载判定，结果仅供工程联调。继续？'):return
         self.rows=[];self.logs=[];self.stop.clear();self.busy=True;self.progress['value']=0
-        self.meta={'version':'0.2','simulation':demo,'settings':asdict(s),'started_utc':datetime.now(timezone.utc).isoformat(),'status':'running','correction':None if not self.correction else {'name':self.correction.name,'points':self.correction.points},'limit':None if not self.limit else {'name':self.limit.name,'points':self.limit.points},'overload_assessment':'NOT_IMPLEMENTED','compliance_verdict':'NOT_ASSESSED'}
-        correction,limit=self.correction,self.limit;resource=self.v['resource'].get().strip()
+        self.meta={'version':'0.3','simulation':demo,'settings':asdict(s),'started_utc':datetime.now(timezone.utc).isoformat(),'status':'running','correction':None if not self.correction else {'name':self.correction.name,'points':self.correction.points},'limit':None if not self.limit else {'name':self.limit.name,'points':self.limit.points},'overload_assessment':'NOT_IMPLEMENTED','compliance_verdict':'NOT_ASSESSED'}
+        correction,limit=self.correction,self.limit;resource=self.v['resource'].get().strip();backend=self.v['backend'].get()
         self.meta['resource']='SIMULATION' if demo else resource
+        self.meta['backend']=backend
         self.status.set('初始化测量…');self.draw()
         def work():
             dev=None;outcome='failed'
             try:
-                dev=Demo() if demo else ESR(resource,lambda m:self.q.put(('log',m)))
+                dev=Demo() if demo else ESR(resource,lambda m:self.q.put(('log',m)),backend=backend)
                 self.q.put(('metadata',{'idn':dev.idn,'readback':dev.configure(s)}))
                 fs=s.frequencies()
                 for i,f in enumerate(fs):

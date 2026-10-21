@@ -1,13 +1,23 @@
 import socketserver,threading,unittest
-from connection import address,resource_name,diagnose
+from connection import address,resource_name,diagnose,connection_plan,BACKENDS
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         self.server.commands.append(self.rfile.readline().strip())
         self.wfile.write(b'Rohde&Schwarz,ESR3,TEST,3.66\n')
 class ConnectionTest(unittest.TestCase):
     def test_normalization(self):
-        for s in ('192.168.1.23','TCPIP::192.168.1.23::INSTR','TCPIP0::192.168.1.23::inst0::INSTR','TCPIP::192.168.1.23::5025::SOCKET'):
-            self.assertEqual(resource_name(s),'TCPIP::192.168.1.23::5025::SOCKET')
+        expected='TCPIP0::192.168.1.23::inst0::INSTR'
+        self.assertEqual(resource_name('192.168.1.23'),expected)
+        self.assertEqual(resource_name(expected),expected)
+        for backend in BACKENDS[:3]:
+            r,o=connection_plan(expected,backend)
+            self.assertEqual(r,expected);self.assertNotIn('SocketIo',o)
+        self.assertIn('SelectVisa=rs',connection_plan(expected,BACKENDS[0])[1])
+        self.assertIn('SelectVisa=py',connection_plan(expected,BACKENDS[2])[1])
+        r,o=connection_plan(expected,BACKENDS[3])
+        self.assertEqual(r,'TCPIP::192.168.1.23::5025::SOCKET')
+        self.assertIn('SelectVisa=SocketIo',o)
+        with self.assertRaises(ValueError):connection_plan(r,BACKENDS[0])
     def test_reject_bad_resource(self):
         for s in ('','TCPIP::host::hislip0::INSTR','abc\n*RST','TCPIP::host::99999::SOCKET'):
             with self.assertRaises(ValueError):address(s)
@@ -41,7 +51,7 @@ class SocketBackendTest(unittest.TestCase):
             worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
             dev=None
             try:
-                dev=ESR(f'TCPIP::127.0.0.1::{server.server_address[1]}::SOCKET')
+                dev=ESR(f'TCPIP::127.0.0.1::{server.server_address[1]}::SOCKET',backend='直接 Socket')
                 self.assertIn('ESR3',dev.idn)
                 self.assertFalse(any('*RST' in c or 'INIT' in c for c in server.commands))
             finally:

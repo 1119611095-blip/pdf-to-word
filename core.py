@@ -71,19 +71,19 @@ class Demo:
     def close(self):pass
 
 class ESR:
-    def __init__(self,resource,log=lambda msg:None):
+    def __init__(self,resource,log=lambda msg:None,backend='R&S VISA / VXI-11'):
         from RsInstrument import RsInstrument
+        from connection import connection_plan
         self.log=log
-        from connection import resource_name, diagnose
-        normalized=resource_name(resource)
-        self.log('连接方式：直接 TCP Socket（无需 VISA 驱动） '+normalized)
+        normalized,options=connection_plan(resource,backend)
+        self.log('通信后端：'+backend+'；地址：'+normalized+'；超时 10 s')
         try:
-            self.io=RsInstrument(normalized,id_query=True,reset=False,
-                                 options='SelectVisa=SocketIo, OpenTimeout=5000, VisaTimeout=5000')
+            self.io=RsInstrument(normalized,id_query=True,reset=False,options=options)
         except Exception as exc:
-            try: details=diagnose(resource)
-            except Exception as diagnostic: details=str(diagnostic)
-            raise RuntimeError('无法建立 ESR3 会话。\n'+details+'\n初始化详情：'+str(exc)) from exc
+            hint=('本版为 64 位程序。请核查 R&S VISA 的 64 位组件；也可选择“系统默认 VISA / VXI-11”。'
+                  if backend=='R&S VISA / VXI-11' else '请核查所选后端、仪器地址和网络连接。')
+            raise RuntimeError('连接失败：'+backend+'\n'+normalized+'\n'+hint+
+                '\n请停止其他软件对接收机的测量/控制后重试。\n详细错误：'+str(exc)) from exc
         try:
             self.io.visa_timeout=10000
             self.io.opc_timeout=120000
