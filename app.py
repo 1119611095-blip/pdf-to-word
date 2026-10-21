@@ -8,7 +8,7 @@ from core import Settings,Curve,Demo,ESR
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('ESR3 · CE 传导发射工作台 | v0.1 工程联调版'); self.geometry('1160x790'); self.minsize(960,680)
+        super().__init__(); self.title('ESR3 · CE 传导发射工作台 | v0.2 连接修复版'); self.geometry('1160x790'); self.minsize(960,680)
         self.configure(bg='#edf2f7'); self.q=queue.Queue(); self.stop=threading.Event(); self.busy=False
         self.rows=[]; self.correction=None; self.limit=None; self.meta={}; self.logs=[]
         style=ttk.Style(self); style.theme_use('clam'); style.configure('TButton',padding=7); style.configure('TLabel',font=('Microsoft YaHei UI',10))
@@ -16,7 +16,7 @@ class App(tk.Tk):
         tk.Label(head,text='CE / 传导发射',bg='#102b46',fg='white',font=('Microsoft YaHei UI',22,'bold')).pack(side='left')
         tk.Label(head,text='ESR3   ·   150 kHz—30 MHz   ·   工程联调版',bg='#102b46',fg='#94c9e8',font=('Microsoft YaHei UI',11)).pack(side='right')
         pane=ttk.Frame(self,padding=12);pane.pack(fill='x'); self.v={}
-        fields=[('mode','模式','模拟演示',['模拟演示','ESR3 实机']),('resource','VISA 地址','TCPIP::192.168.1.100::INSTR',None),('phase','线路','L',['L','N']),('detector','检波器','PK',['PK','QP','CISPR_AV'])]
+        fields=[('mode','模式','模拟演示',['模拟演示','ESR3 实机']),('resource','仪器 IP / 地址','192.168.1.100',None),('phase','线路','L',['L','N']),('detector','检波器','PK',['PK','QP','CISPR_AV'])]
         for i,(key,label,value,opts) in enumerate(fields):
             ttk.Label(pane,text=label).grid(row=0,column=i*2,padx=5)
             v=self.v[key]=tk.StringVar(value=value)
@@ -28,9 +28,9 @@ class App(tk.Tk):
             self.v[key]=tk.StringVar(value=value);ttk.Entry(grid,textvariable=self.v[key],width=12).grid(row=0,column=i*2+1,padx=5)
         ttk.Label(grid,text='固定：CISPR 6 dB / 9 kHz').grid(row=0,column=8,padx=14)
         actions=ttk.Frame(self,padding=(16,10));actions.pack(fill='x')
-        for text,cmd in [('检测连接',self.connect),('加载修正 CSV',self.load_correction),('加载限值 CSV',self.load_limit),('清除曲线文件',self.clear_curves),('开始测量',self.start),('停止',self.cancel),('导出 CSV+记录',self.export)]:
+        for text,cmd in [('检测连接',self.connect),('网络诊断',self.diagnose),('保存日志',self.save_log),('加载修正 CSV',self.load_correction),('加载限值 CSV',self.load_limit),('清除曲线文件',self.clear_curves),('开始测量',self.start),('停止',self.cancel),('导出 CSV+记录',self.export)]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=3)
-        self.note=tk.StringVar(value='模拟模式 · 未加载修正/限值；L/N 仅作记录，请手动切换 LISN。')
+        self.note=tk.StringVar(value='LAN 使用直接 TCP 5025，无需 VISA 驱动；L/N 请手动切换 LISN。')
         ttk.Label(self,textvariable=self.note,wraplength=1120,padding=(20,4)).pack(fill='x')
         self.canvas=tk.Canvas(self,bg='#fff',highlightthickness=0,height=340);self.canvas.pack(fill='both',expand=True,padx=20,pady=8);self.canvas.bind('<Configure>',lambda e:self.draw())
         self.progress=ttk.Progressbar(self,maximum=100);self.progress.pack(fill='x',padx=20)
@@ -62,6 +62,21 @@ class App(tk.Tk):
                     if not demo:dev.io.close()
                 self.q.put(('idle',None))
         threading.Thread(target=work,daemon=True).start()
+    def diagnose(self):
+        if not self.idle():return
+        resource=self.v['resource'].get().strip();self.busy=True
+        self.status.set('正在诊断 TCP 端口与 *IDN? 响应…')
+        def work():
+            from connection import diagnose
+            try:self.q.put(('message',diagnose(resource)))
+            except Exception as e:self.q.put(('error',str(e)))
+            finally:self.q.put(('idle',None))
+        threading.Thread(target=work,daemon=True).start()
+    def save_log(self):
+        p=filedialog.asksaveasfilename(defaultextension='.txt',initialfile='ESR3_connection_log.txt')
+        if p:
+            try:Path(p).write_text('\n'.join(self.logs),encoding='utf-8')
+            except Exception as e:messagebox.showerror('保存失败',str(e))
     def load_correction(self):self.load('correction','correction_db')
     def load_limit(self):self.load('limit','limit_dbuv')
     def load(self,kind,col):
@@ -85,7 +100,7 @@ class App(tk.Tk):
         demo=self.v['mode'].get()=='模拟演示'
         if not demo and not messagebox.askokcancel('开始 ESR3 实测', '将预置 ESR3 当前设置（*RST），使用 RF INPUT1、AC 耦合、50Ω、自动衰减、前放关闭。\n仪器现有设置需先自行保存；本程序不自动恢复。\n确认 LISN 已手动切换到 '+s.phase+'，并核对连接和外部修正文件。\n本版未实现自动过载判定，结果仅供工程联调。继续？'):return
         self.rows=[];self.logs=[];self.stop.clear();self.busy=True;self.progress['value']=0
-        self.meta={'version':'0.1','simulation':demo,'settings':asdict(s),'started_utc':datetime.now(timezone.utc).isoformat(),'status':'running','correction':None if not self.correction else {'name':self.correction.name,'points':self.correction.points},'limit':None if not self.limit else {'name':self.limit.name,'points':self.limit.points},'overload_assessment':'NOT_IMPLEMENTED','compliance_verdict':'NOT_ASSESSED'}
+        self.meta={'version':'0.2','simulation':demo,'settings':asdict(s),'started_utc':datetime.now(timezone.utc).isoformat(),'status':'running','correction':None if not self.correction else {'name':self.correction.name,'points':self.correction.points},'limit':None if not self.limit else {'name':self.limit.name,'points':self.limit.points},'overload_assessment':'NOT_IMPLEMENTED','compliance_verdict':'NOT_ASSESSED'}
         correction,limit=self.correction,self.limit;resource=self.v['resource'].get().strip()
         self.meta['resource']='SIMULATION' if demo else resource
         self.status.set('初始化测量…');self.draw()
@@ -118,9 +133,9 @@ class App(tk.Tk):
             if kind=='point':self.rows.append(data);dirty=True
             elif kind=='log':self.logs.append(data)
             elif kind=='metadata':self.meta.update(data)
-            elif kind=='message':self.status.set(data)
+            elif kind=='message':self.logs.append(data);self.status.set(data);messagebox.showinfo('连接结果',data)
             elif kind=='idle':self.busy=False
-            elif kind=='error':self.status.set('错误：'+data);messagebox.showerror('任务错误',data)
+            elif kind=='error':self.logs.append(data);self.status.set('错误：'+data);messagebox.showerror('任务错误',data)
             elif kind=='finished':
                 self.busy=False;self.meta['status']=data;self.meta['ended_utc']=datetime.now(timezone.utc).isoformat()
                 self.status.set({'complete':'测量完成','failed':'任务失败，已保留部分数据','stopped':'已停止，已保留部分数据'}[data]+' · '+str(len(self.rows))+' 点；未做符合性结论');dirty=True

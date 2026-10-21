@@ -74,7 +74,16 @@ class ESR:
     def __init__(self,resource,log=lambda msg:None):
         from RsInstrument import RsInstrument
         self.log=log
-        self.io=RsInstrument(resource,id_query=True,reset=False)
+        from connection import resource_name, diagnose
+        normalized=resource_name(resource)
+        self.log('连接方式：直接 TCP Socket（无需 VISA 驱动） '+normalized)
+        try:
+            self.io=RsInstrument(normalized,id_query=True,reset=False,
+                                 options='SelectVisa=SocketIo, OpenTimeout=5000, VisaTimeout=5000')
+        except Exception as exc:
+            try: details=diagnose(resource)
+            except Exception as diagnostic: details=str(diagnostic)
+            raise RuntimeError('无法建立 ESR3 会话。\n'+details+'\n初始化详情：'+str(exc)) from exc
         try:
             self.io.visa_timeout=10000
             self.io.opc_timeout=120000
