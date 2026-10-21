@@ -1,0 +1,39 @@
+name: Build ESR3 CE Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [esr3-ce-build]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
+      - run: python -m unittest discover -s tests -v
+      - name: GUI simulation smoke test
+        shell: pwsh
+        run: |
+          python app.py --smoke-test source-smoke.txt
+          if ((Get-Content source-smoke.txt -Raw) -ne 'PASS') { throw 'Source GUI smoke test failed' }
+      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name ESR3_CE --collect-all RsInstrument --collect-all pyvisa_py app.py
+      - name: EXE smoke test
+        shell: pwsh
+        run: |
+          $resultFile = Join-Path $env:RUNNER_TEMP 'exe-smoke.txt'
+          $p = Start-Process -FilePath dist/ESR3_CE.exe -ArgumentList '--smoke-test', $resultFile -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'EXE timed out' }
+          if ($p.ExitCode -ne 0) { throw 'EXE failed' }
+          if ((Get-Content $resultFile -Raw) -ne 'PASS') { throw 'EXE GUI smoke test failed' }
+          Get-FileHash dist/ESR3_CE.exe -Algorithm SHA256 | Format-List | Out-File dist/SHA256.txt
+          Copy-Item README_使用说明.md dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESR3_CE_Windows
+          path: dist/*
+          if-no-files-found: error
